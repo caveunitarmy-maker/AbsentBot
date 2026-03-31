@@ -195,6 +195,9 @@ async def on_ready():
         create_new_sheet.start()
 
     try:
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+
         synced = await bot.tree.sync(guild=GUILD_OBJECT)
         print(f"길드 명령어 동기화 완료: {len(synced)}개")
     except Exception as e:
