@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import discord
 import gspread
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import tasks
 from dotenv import load_dotenv
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
@@ -20,7 +20,9 @@ OWNER_USER_ID = 942558158436589640
 
 intents = discord.Intents.default()
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 GUILD_ID = os.getenv("GUILD_ID")
 SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME")
@@ -47,8 +49,8 @@ scope = [
 creds = ServiceAccountCredentials.from_json_keyfile_dict(
     json.loads(GOOGLE_CREDENTIALS_JSON), scope
 )
-client = gspread.authorize(creds)
-spreadsheet = client.open(SPREADSHEET_NAME)
+gs_client = gspread.authorize(creds)
+spreadsheet = gs_client.open(SPREADSHEET_NAME)
 sheet = spreadsheet.get_worksheet(0)
 
 
@@ -121,24 +123,15 @@ async def send_embed(
 
 
 async def require_owner(interaction: discord.Interaction) -> bool:
-    if interaction.guild_id != GUILD_ID:
-        await send_embed(
-            interaction,
-            "사용 불가",
-            "이 서버에서만 사용할 수 있습니다.",
-            color=0xE74C3C,
-        )
-        return False
-
     if interaction.user.id != OWNER_USER_ID:
         await send_embed(
             interaction,
             "권한 없음",
-            "지정된 사용자만 이 명령어를 사용할 수 있습니다.",
+            "관리자 ID로 지정된 사용자만 이 명령어를 사용할 수 있습니다.",
             color=0xE74C3C,
+            ephemeral=True,
         )
         return False
-
     return True
 
 
@@ -171,13 +164,17 @@ def ensure_sheet_rows(target_row: int) -> None:
 
 
 async def is_kicked_or_banned(member: discord.Member) -> bool:
-    now = datetime.now(timezone.utc)
+    try:
+        now = datetime.now(timezone.utc)
 
-    for action in (discord.AuditLogAction.kick, discord.AuditLogAction.ban):
-        async for entry in member.guild.audit_logs(limit=10, action=action):
-            if entry.target and entry.target.id == member.id:
-                if (now - entry.created_at).total_seconds() < 10:
-                    return True
+        for action in (discord.AuditLogAction.kick, discord.AuditLogAction.ban):
+            async for entry in member.guild.audit_logs(limit=10, action=action):
+                if entry.target and entry.target.id == member.id:
+                    if (now - entry.created_at).total_seconds() < 10:
+                        return True
+    except Exception as e:
+        print(f"감사 로그 확인 오류: {e}")
+
     return False
 
 
@@ -193,7 +190,7 @@ async def on_ready():
         create_new_sheet.start()
 
     try:
-        synced = await bot.tree.sync(guild=GUILD_OBJECT)
+        synced = await tree.sync(guild=GUILD_OBJECT)
         print(f"길드 명령어 동기화 완료: {len(synced)}개")
     except Exception as e:
         print(f"명령어 동기화 오류: {e}")
@@ -206,9 +203,8 @@ async def create_new_sheet():
         print(create_sheet())
 
 
-@bot.tree.command(name="워크시트추가", description="새 날짜 시트를 생성합니다")
+@tree.command(name="워크시트추가", description="새 날짜 시트를 생성합니다", guild=GUILD_OBJECT)
 @app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
 async def add_sheet(interaction: discord.Interaction):
     if not await require_owner(interaction):
         return
@@ -216,12 +212,11 @@ async def add_sheet(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     result = create_sheet()
     color = 0x2ECC71 if "완료" in result or "전환됨" in result else 0xE74C3C
-    await send_embed(interaction, "워크시트 처리", result, color=color)
+    await send_embed(interaction, "워크시트 처리", result, color=color, ephemeral=True)
 
 
-@bot.tree.command(name="추적시작", description="퇴장 추적을 시작합니다")
+@tree.command(name="추적시작", description="퇴장 추적을 시작합니다", guild=GUILD_OBJECT)
 @app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
 async def start_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
@@ -235,12 +230,12 @@ async def start_tracking(interaction: discord.Interaction):
         "추적 시작",
         "퇴장 추적이 활성화되었습니다.",
         color=0x2ECC71,
+        ephemeral=False,
     )
 
 
-@bot.tree.command(name="추적정지", description="퇴장 추적을 중지합니다")
+@tree.command(name="추적정지", description="퇴장 추적을 중지합니다", guild=GUILD_OBJECT)
 @app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
 async def stop_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
@@ -254,12 +249,12 @@ async def stop_tracking(interaction: discord.Interaction):
         "추적 정지",
         "퇴장 추적이 비활성화되었습니다.",
         color=0xE67E22,
+        ephemeral=False,
     )
 
 
-@bot.tree.command(name="봇상태", description="현재 봇 상태를 확인합니다")
+@tree.command(name="봇상태", description="현재 봇 상태를 확인합니다", guild=GUILD_OBJECT)
 @app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
 async def bot_status(interaction: discord.Interaction):
     if not await require_owner(interaction):
         return
@@ -273,8 +268,9 @@ async def bot_status(interaction: discord.Interaction):
         f"현재 상태: 작동 중\n"
         f"추적 상태: {tracking_text}\n"
         f"현재 워크시트: {current_sheet}\n"
-        f"허용 사용자 ID: `{OWNER_USER_ID}`",
+        f"관리자 ID: `{OWNER_USER_ID}`",
         color=0x3498DB,
+        ephemeral=True,
     )
 
 
@@ -288,12 +284,14 @@ async def on_member_remove(member: discord.Member):
             print(f"추방/차단 사용자라 기록 생략: {member} ({member.id})")
             return
 
-        user_ids = sheet.col_values(4)
+        rows = sheet.get("C:D")
+        user_ids = {row[1] for row in rows if len(row) > 1 and row[1]}
+
         if str(member.id) in user_ids:
             print(f"중복 사용자라 기록 생략: {member} ({member.id})")
             return
 
-        next_row = len(sheet.col_values(3)) + 1
+        next_row = len(rows) + 1
         ensure_sheet_rows(next_row)
         sheet.update(f"C{next_row}:D{next_row}", [[str(member), str(member.id)]])
         print(f"기록 완료: {member} ({member.id})")
