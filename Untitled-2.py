@@ -91,24 +91,55 @@ def save_tracking_state() -> None:
     save_json_file(TRACKING_FILE, {"enabled": tracking_enabled})
 
 
-async def require_admin(interaction: discord.Interaction) -> bool:
-    if interaction.guild_id != GUILD_ID:
-        await interaction.response.send_message("이 서버에서만 사용할 수 있습니다.", ephemeral=True)
-        return False
-
-    if interaction.user.id != SUPER_ADMIN_ID:
-        await interaction.response.send_message("총관리자만 사용할 수 있습니다.", ephemeral=True)
-        return False
-
-    return True
-
-
 def now_kst() -> datetime:
     return datetime.now(KST)
 
 
 def get_today_sheet_name() -> str:
     return now_kst().strftime("%Y. %m. %d.")
+
+
+def make_embed(title: str, description: str, color: int = 0xF4C542) -> discord.Embed:
+    embed = discord.Embed(title=title, description=description, color=color)
+    embed.set_footer(text="TDC Tracker")
+    embed.timestamp = now_kst()
+    return embed
+
+
+async def send_embed(
+    interaction: discord.Interaction,
+    title: str,
+    description: str,
+    color: int = 0xF4C542,
+    ephemeral: bool = True,
+) -> None:
+    embed = make_embed(title, description, color)
+    if interaction.response.is_done():
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
+
+
+async def require_admin(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id != GUILD_ID:
+        await send_embed(
+            interaction,
+            "사용 불가",
+            "이 서버에서만 사용할 수 있습니다.",
+            color=0xE74C3C,
+        )
+        return False
+
+    if interaction.user.id != SUPER_ADMIN_ID:
+        await send_embed(
+            interaction,
+            "권한 없음",
+            "총관리자만 사용할 수 있습니다.",
+            color=0xE74C3C,
+        )
+        return False
+
+    return True
 
 
 def create_sheet() -> str:
@@ -164,7 +195,6 @@ async def on_ready():
     try:
         bot.tree.clear_commands(guild=None)
         await bot.tree.sync()
-
         synced = await bot.tree.sync(guild=GUILD_OBJECT)
         print(f"길드 명령어 동기화 완료: {len(synced)}개")
     except Exception as e:
@@ -186,7 +216,9 @@ async def add_sheet(interaction: discord.Interaction):
         return
 
     await interaction.response.defer(ephemeral=True)
-    await interaction.followup.send(create_sheet(), ephemeral=True)
+    result = create_sheet()
+    color = 0x2ECC71 if "완료" in result or "전환됨" in result else 0xE74C3C
+    await send_embed(interaction, "워크시트 처리", result, color=color)
 
 
 @bot.tree.command(name="추적시작", description="퇴장 추적을 시작합니다")
@@ -200,7 +232,12 @@ async def start_tracking(interaction: discord.Interaction):
 
     tracking_enabled = True
     save_tracking_state()
-    await interaction.response.send_message("퇴장 추적을 시작했습니다.", ephemeral=True)
+    await send_embed(
+        interaction,
+        "추적 시작",
+        "퇴장 추적이 활성화되었습니다.",
+        color=0x2ECC71,
+    )
 
 
 @bot.tree.command(name="추적정지", description="퇴장 추적을 중지합니다")
@@ -214,7 +251,12 @@ async def stop_tracking(interaction: discord.Interaction):
 
     tracking_enabled = False
     save_tracking_state()
-    await interaction.response.send_message("퇴장 추적을 중지했습니다.", ephemeral=True)
+    await send_embed(
+        interaction,
+        "추적 정지",
+        "퇴장 추적이 비활성화되었습니다.",
+        color=0xE67E22,
+    )
 
 
 @bot.tree.command(name="봇상태", description="현재 봇 상태를 확인합니다")
@@ -227,12 +269,11 @@ async def bot_status(interaction: discord.Interaction):
     tracking_text = "활성화" if tracking_enabled else "비활성화"
     current_sheet = sheet.title if sheet else "없음"
 
-    await interaction.response.send_message(
-        f"봇 상태: 작동 중\n"
-        f"추적 상태: {tracking_text}\n"
-        f"현재 워크시트: {current_sheet}\n"
-        f"총관리자: <@{SUPER_ADMIN_ID}>",
-        ephemeral=True,
+    await send_embed(
+        interaction,
+        "봇 상태",
+        f"현재 상태: 작동 중\n추적 상태: {tracking_text}\n현재 워크시트: {current_sheet}",
+        color=0x3498DB,
     )
 
 
