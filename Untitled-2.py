@@ -69,34 +69,40 @@ def run_web_server():
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
-def load_admin_ids() -> set[int]:
-    if not os.path.exists(ADMINS_FILE):
-        return set()
+def load_json_file(path: str, default):
+    if not os.path.exists(path):
+        return default
     try:
-        with open(ADMINS_FILE, "r", encoding="utf-8") as f:
-            return {int(user_id) for user_id in json.load(f) if int(user_id) != SUPER_ADMIN_ID}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def save_json_file(path: str, data) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_admin_ids() -> set[int]:
+    data = load_json_file(ADMINS_FILE, [])
+    try:
+        return {int(user_id) for user_id in data if int(user_id) != SUPER_ADMIN_ID}
     except Exception:
         return set()
 
 
 def save_admin_ids() -> None:
-    with open(ADMINS_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(admin_ids), f, ensure_ascii=False, indent=2)
+    save_json_file(ADMINS_FILE, sorted(admin_ids))
 
 
 def load_tracking_state() -> bool:
-    if not os.path.exists(TRACKING_FILE):
-        return False
-    try:
-        with open(TRACKING_FILE, "r", encoding="utf-8") as f:
-            return bool(json.load(f).get("enabled", False))
-    except Exception:
-        return False
+    data = load_json_file(TRACKING_FILE, {"enabled": False})
+    return bool(data.get("enabled", False))
 
 
 def save_tracking_state() -> None:
-    with open(TRACKING_FILE, "w", encoding="utf-8") as f:
-        json.dump({"enabled": tracking_enabled}, f, ensure_ascii=False, indent=2)
+    save_json_file(TRACKING_FILE, {"enabled": tracking_enabled})
 
 
 def is_admin_user(user_id: int) -> bool:
@@ -107,9 +113,11 @@ async def require_admin(interaction: discord.Interaction) -> bool:
     if interaction.guild_id != GUILD_ID:
         await interaction.response.send_message("이 서버에서만 사용할 수 있습니다.", ephemeral=True)
         return False
+
     if not is_admin_user(interaction.user.id):
         await interaction.response.send_message("관리자만 사용할 수 있습니다.", ephemeral=True)
         return False
+
     return True
 
 
@@ -160,6 +168,20 @@ async def is_kicked_or_banned(member: discord.Member) -> bool:
     return False
 
 
+def get_admin_status_text(guild: discord.Guild | None) -> str:
+    lines = [f"총관리자: <@{SUPER_ADMIN_ID}>"]
+
+    if not admin_ids:
+        lines.append("일반 관리자: 없음")
+        return "\n".join(lines)
+
+    lines.append("일반 관리자:")
+    for user_id in sorted(admin_ids):
+        member = guild.get_member(user_id) if guild else None
+        lines.append(member.mention if member else f"`{user_id}`")
+    return "\n".join(lines)
+
+
 admin_ids = load_admin_ids()
 tracking_enabled = load_tracking_state()
 
@@ -186,19 +208,20 @@ async def create_new_sheet():
         print(create_sheet())
 
 
+@bot.tree.command(name="워크시트추가", description="새 날짜 시트를 생성합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="워크시트추가", description="새 날짜 시트를 생성합니다")
 async def add_sheet(interaction: discord.Interaction):
     if not await require_admin(interaction):
         return
+
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(create_sheet(), ephemeral=True)
 
 
+@bot.tree.command(name="관리자변경", description="관리자를 추가하거나 제거합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="관리자변경", description="관리자를 추가하거나 제거합니다")
 @app_commands.describe(action="관리자추가 또는 관리자제거", 멤버="대상 멤버")
 async def manage_admin(
     interaction: discord.Interaction,
@@ -216,6 +239,7 @@ async def manage_admin(
         if 멤버.id in admin_ids:
             await interaction.response.send_message(f"{멤버.mention} 은(는) 이미 관리자입니다.", ephemeral=True)
             return
+
         admin_ids.add(멤버.id)
         save_admin_ids()
         await interaction.response.send_message(f"{멤버.mention} 을(를) 관리자로 추가했습니다.", ephemeral=True)
@@ -230,29 +254,22 @@ async def manage_admin(
     await interaction.response.send_message(f"{멤버.mention} 을(를) 관리자에서 제거했습니다.", ephemeral=True)
 
 
+@bot.tree.command(name="관리자현황", description="현재 등록된 관리자 목록을 확인합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="관리자현황", description="현재 등록된 관리자 목록을 확인합니다")
 async def admin_status(interaction: discord.Interaction):
     if not await require_admin(interaction):
         return
 
-    lines = [f"총관리자: <@{SUPER_ADMIN_ID}>"]
-
-    if admin_ids:
-        lines.append("일반 관리자:")
-        for user_id in sorted(admin_ids):
-            member = interaction.guild.get_member(user_id)
-            lines.append(member.mention if member else f"`{user_id}`")
-    else:
-        lines.append("일반 관리자: 없음")
-
-    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+    await interaction.response.send_message(
+        get_admin_status_text(interaction.guild),
+        ephemeral=True,
+    )
 
 
+@bot.tree.command(name="추적시작", description="퇴장 추적을 시작합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="추적시작", description="퇴장 추적을 시작합니다")
 async def start_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
@@ -264,9 +281,9 @@ async def start_tracking(interaction: discord.Interaction):
     await interaction.response.send_message("퇴장 추적을 시작했습니다.", ephemeral=True)
 
 
+@bot.tree.command(name="추적정지", description="퇴장 추적을 중지합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="추적정지", description="퇴장 추적을 중지합니다")
 async def stop_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
@@ -278,23 +295,22 @@ async def stop_tracking(interaction: discord.Interaction):
     await interaction.response.send_message("퇴장 추적을 중지했습니다.", ephemeral=True)
 
 
+@bot.tree.command(name="봇상태", description="현재 봇 상태를 확인합니다")
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
-@bot.tree.command(name="봇상태", description="현재 봇 상태를 확인합니다")
 async def bot_status(interaction: discord.Interaction):
     if not await require_admin(interaction):
         return
 
-    current_sheet = sheet.title if sheet else "없음"
     tracking_text = "활성화" if tracking_enabled else "비활성화"
+    current_sheet = sheet.title if sheet else "없음"
 
     await interaction.response.send_message(
         f"봇 상태: 작동 중\n"
         f"추적 상태: {tracking_text}\n"
         f"현재 워크시트: {current_sheet}\n"
-        f"총관리자: <@{SUPER_ADMIN_ID}>\n"
-        f"일반 관리자 수: {len(admin_ids)}명",
-        ephemeral=True
+        f"{get_admin_status_text(interaction.guild)}",
+        ephemeral=True,
     )
 
 
