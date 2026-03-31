@@ -3,7 +3,6 @@ import os
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Literal
 
 import discord
 import gspread
@@ -16,7 +15,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 load_dotenv()
 
 KST = timezone(timedelta(hours=9))
-ADMINS_FILE = "admins.json"
 TRACKING_FILE = "tracking_state.json"
 SUPER_ADMIN_ID = 942558158436589640
 
@@ -84,18 +82,6 @@ def save_json_file(path: str, data) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_admin_ids() -> set[int]:
-    data = load_json_file(ADMINS_FILE, [])
-    try:
-        return {int(user_id) for user_id in data if int(user_id) != SUPER_ADMIN_ID}
-    except Exception:
-        return set()
-
-
-def save_admin_ids() -> None:
-    save_json_file(ADMINS_FILE, sorted(admin_ids))
-
-
 def load_tracking_state() -> bool:
     data = load_json_file(TRACKING_FILE, {"enabled": False})
     return bool(data.get("enabled", False))
@@ -105,17 +91,13 @@ def save_tracking_state() -> None:
     save_json_file(TRACKING_FILE, {"enabled": tracking_enabled})
 
 
-def is_admin_user(user_id: int) -> bool:
-    return user_id == SUPER_ADMIN_ID or user_id in admin_ids
-
-
 async def require_admin(interaction: discord.Interaction) -> bool:
     if interaction.guild_id != GUILD_ID:
         await interaction.response.send_message("이 서버에서만 사용할 수 있습니다.", ephemeral=True)
         return False
 
-    if not is_admin_user(interaction.user.id):
-        await interaction.response.send_message("관리자만 사용할 수 있습니다.", ephemeral=True)
+    if interaction.user.id != SUPER_ADMIN_ID:
+        await interaction.response.send_message("총관리자만 사용할 수 있습니다.", ephemeral=True)
         return False
 
     return True
@@ -168,21 +150,6 @@ async def is_kicked_or_banned(member: discord.Member) -> bool:
     return False
 
 
-def get_admin_status_text(guild: discord.Guild | None) -> str:
-    lines = [f"총관리자: <@{SUPER_ADMIN_ID}>"]
-
-    if not admin_ids:
-        lines.append("일반 관리자: 없음")
-        return "\n".join(lines)
-
-    lines.append("일반 관리자:")
-    for user_id in sorted(admin_ids):
-        member = guild.get_member(user_id) if guild else None
-        lines.append(member.mention if member else f"`{user_id}`")
-    return "\n".join(lines)
-
-
-admin_ids = load_admin_ids()
 tracking_enabled = load_tracking_state()
 
 
@@ -220,54 +187,6 @@ async def add_sheet(interaction: discord.Interaction):
 
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(create_sheet(), ephemeral=True)
-
-
-@bot.tree.command(name="관리자변경", description="관리자를 추가하거나 제거합니다")
-@app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
-@app_commands.describe(action="관리자추가 또는 관리자제거", 멤버="대상 멤버")
-async def manage_admin(
-    interaction: discord.Interaction,
-    action: Literal["관리자추가", "관리자제거"],
-    멤버: discord.Member,
-):
-    if not await require_admin(interaction):
-        return
-
-    if 멤버.id == SUPER_ADMIN_ID:
-        await interaction.response.send_message("총관리자는 변경할 수 없습니다.", ephemeral=True)
-        return
-
-    if action == "관리자추가":
-        if 멤버.id in admin_ids:
-            await interaction.response.send_message(f"{멤버.mention} 은(는) 이미 관리자입니다.", ephemeral=True)
-            return
-
-        admin_ids.add(멤버.id)
-        save_admin_ids()
-        await interaction.response.send_message(f"{멤버.mention} 을(를) 관리자로 추가했습니다.", ephemeral=True)
-        return
-
-    if 멤버.id not in admin_ids:
-        await interaction.response.send_message(f"{멤버.mention} 은(는) 등록된 관리자가 아닙니다.", ephemeral=True)
-        return
-
-    admin_ids.remove(멤버.id)
-    save_admin_ids()
-    await interaction.response.send_message(f"{멤버.mention} 을(를) 관리자에서 제거했습니다.", ephemeral=True)
-
-
-@bot.tree.command(name="관리자현황", description="현재 등록된 관리자 목록을 확인합니다")
-@app_commands.guild_only()
-@app_commands.guilds(GUILD_OBJECT)
-async def admin_status(interaction: discord.Interaction):
-    if not await require_admin(interaction):
-        return
-
-    await interaction.response.send_message(
-        get_admin_status_text(interaction.guild),
-        ephemeral=True,
-    )
 
 
 @bot.tree.command(name="추적시작", description="퇴장 추적을 시작합니다")
@@ -312,7 +231,7 @@ async def bot_status(interaction: discord.Interaction):
         f"봇 상태: 작동 중\n"
         f"추적 상태: {tracking_text}\n"
         f"현재 워크시트: {current_sheet}\n"
-        f"{get_admin_status_text(interaction.guild)}",
+        f"총관리자: <@{SUPER_ADMIN_ID}>",
         ephemeral=True,
     )
 
