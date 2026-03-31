@@ -16,7 +16,7 @@ load_dotenv()
 
 KST = timezone(timedelta(hours=9))
 TRACKING_FILE = "tracking_state.json"
-SUPER_ADMIN_ID = 942558158436589640
+OWNER_USER_ID = 942558158436589640
 
 intents = discord.Intents.default()
 intents.members = True
@@ -99,10 +99,10 @@ def get_today_sheet_name() -> str:
     return now_kst().strftime("%Y. %m. %d.")
 
 
-def make_embed(title: str, description: str, color: int = 0xF4C542) -> discord.Embed:
+def make_embed(title: str, description: str, color: int) -> discord.Embed:
     embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_footer(text="TDC Tracker")
     embed.timestamp = now_kst()
+    embed.set_footer(text="TDC Tracker")
     return embed
 
 
@@ -110,7 +110,7 @@ async def send_embed(
     interaction: discord.Interaction,
     title: str,
     description: str,
-    color: int = 0xF4C542,
+    color: int = 0xF1C40F,
     ephemeral: bool = True,
 ) -> None:
     embed = make_embed(title, description, color)
@@ -120,7 +120,7 @@ async def send_embed(
         await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
 
 
-async def require_admin(interaction: discord.Interaction) -> bool:
+async def require_owner(interaction: discord.Interaction) -> bool:
     if interaction.guild_id != GUILD_ID:
         await send_embed(
             interaction,
@@ -130,11 +130,11 @@ async def require_admin(interaction: discord.Interaction) -> bool:
         )
         return False
 
-    if interaction.user.id != SUPER_ADMIN_ID:
+    if interaction.user.id != OWNER_USER_ID:
         await send_embed(
             interaction,
             "권한 없음",
-            "총관리자만 사용할 수 있습니다.",
+            "지정된 사용자만 이 명령어를 사용할 수 있습니다.",
             color=0xE74C3C,
         )
         return False
@@ -193,8 +193,6 @@ async def on_ready():
         create_new_sheet.start()
 
     try:
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
         synced = await bot.tree.sync(guild=GUILD_OBJECT)
         print(f"길드 명령어 동기화 완료: {len(synced)}개")
     except Exception as e:
@@ -212,7 +210,7 @@ async def create_new_sheet():
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
 async def add_sheet(interaction: discord.Interaction):
-    if not await require_admin(interaction):
+    if not await require_owner(interaction):
         return
 
     await interaction.response.defer(ephemeral=True)
@@ -227,7 +225,7 @@ async def add_sheet(interaction: discord.Interaction):
 async def start_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
-    if not await require_admin(interaction):
+    if not await require_owner(interaction):
         return
 
     tracking_enabled = True
@@ -246,7 +244,7 @@ async def start_tracking(interaction: discord.Interaction):
 async def stop_tracking(interaction: discord.Interaction):
     global tracking_enabled
 
-    if not await require_admin(interaction):
+    if not await require_owner(interaction):
         return
 
     tracking_enabled = False
@@ -263,7 +261,7 @@ async def stop_tracking(interaction: discord.Interaction):
 @app_commands.guild_only()
 @app_commands.guilds(GUILD_OBJECT)
 async def bot_status(interaction: discord.Interaction):
-    if not await require_admin(interaction):
+    if not await require_owner(interaction):
         return
 
     tracking_text = "활성화" if tracking_enabled else "비활성화"
@@ -272,7 +270,10 @@ async def bot_status(interaction: discord.Interaction):
     await send_embed(
         interaction,
         "봇 상태",
-        f"현재 상태: 작동 중\n추적 상태: {tracking_text}\n현재 워크시트: {current_sheet}",
+        f"현재 상태: 작동 중\n"
+        f"추적 상태: {tracking_text}\n"
+        f"현재 워크시트: {current_sheet}\n"
+        f"허용 사용자 ID: `{OWNER_USER_ID}`",
         color=0x3498DB,
     )
 
