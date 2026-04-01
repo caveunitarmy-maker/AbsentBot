@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 import threading
+import traceback
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -174,6 +176,7 @@ async def is_kicked_or_banned(member: discord.Member) -> bool:
                         return True
     except Exception as e:
         print(f"감사 로그 확인 오류: {e}")
+        traceback.print_exc()
 
     return False
 
@@ -194,6 +197,17 @@ async def on_ready():
         print(f"길드 명령어 동기화 완료: {len(synced)}개")
     except Exception as e:
         print(f"명령어 동기화 오류: {e}")
+        traceback.print_exc()
+
+
+@bot.event
+async def on_disconnect():
+    print("디스코드 연결 끊김")
+
+
+@bot.event
+async def on_resumed():
+    print("디스코드 연결 복구")
 
 
 @tasks.loop(minutes=1)
@@ -297,7 +311,25 @@ async def on_member_remove(member: discord.Member):
         print(f"기록 완료: {member} ({member.id})")
     except Exception as e:
         print(f"시트 기록 오류: {e}")
+        traceback.print_exc()
+
+
+async def main():
+    retry_delay = 5
+
+    while True:
+        try:
+            print("봇 실행 시도 중...")
+            await bot.start(TOKEN)
+        except Exception as e:
+            print(f"봇이 종료됨: {e}")
+            traceback.print_exc()
+            print(f"{retry_delay}초 후 재시작합니다.")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 300)
+        else:
+            retry_delay = 5
 
 
 threading.Thread(target=run_web_server, daemon=True).start()
-bot.run(TOKEN)
+asyncio.run(main())
